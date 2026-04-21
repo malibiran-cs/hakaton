@@ -1426,7 +1426,7 @@ class _ReportDialogState extends State<_ReportDialog> {
             _label('Location'),
             const SizedBox(height: 5),
             DropdownButtonFormField<String>(
-              value: _selectedLocation,
+              initialValue: _selectedLocation,
               isExpanded: true,
               decoration: InputDecoration(
                 border: OutlineInputBorder(
