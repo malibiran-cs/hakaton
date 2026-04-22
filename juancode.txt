@@ -1,0 +1,1633 @@
+import 'package:flutter/material.dart';
+import 'dart:ui';
+
+void main() => runApp(const MyApp());
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'CICS PWD Map',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1D9E75)),
+        useMaterial3: true,
+      ),
+      home: const MapScreen(),
+    );
+  }
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+enum RoomType { classroom, lab, office, toilet, utility }
+enum AppMode { normal, emergency, pwd }
+enum DisabilityMode { none, mobility, visual, hearing }
+
+// ─── Data Models ──────────────────────────────────────────────────────────────
+
+class RoomData {
+  final String name;
+  final RoomType type;
+  final double widthFactor;
+  final String? badge;
+  const RoomData({
+    required this.name,
+    required this.type,
+    this.widthFactor = 1.0,
+    this.badge,
+  });
+}
+
+class FloorData {
+  final int number;
+  final String label;
+  final List<RoomData> rooms;
+  final bool stairsLeft;
+  final bool stairsRight;
+  const FloorData({
+    required this.number,
+    required this.label,
+    required this.rooms,
+    this.stairsLeft = true,
+    this.stairsRight = true,
+  });
+}
+
+class PWDReport {
+  final String id;
+  final int floor;
+  final String location;
+  final String issueType;
+  final String description;
+  final String severity;
+  final double xNorm;
+
+  const PWDReport({
+    required this.id,
+    required this.floor,
+    required this.location,
+    required this.issueType,
+    required this.description,
+    required this.severity,
+    required this.xNorm,
+  });
+
+  Map<String, dynamic> toMap() => {
+        'floor': floor,
+        'location': location,
+        'issue_type': issueType,
+        'description': description,
+        'severity': severity,
+        'x_norm': xNorm,
+      };
+
+  static PWDReport fromMap(Map<String, dynamic> m) => PWDReport(
+        id: m['id'].toString(),
+        floor: m['floor'],
+        location: m['location'],
+        issueType: m['issue_type'],
+        description: m['description'],
+        severity: m['severity'],
+        xNorm: (m['x_norm'] as num).toDouble(),
+      );
+}
+
+class FloorRoute {
+  final double startX;
+  final double endX;
+  final String note;
+  const FloorRoute({
+    required this.startX,
+    required this.endX,
+    required this.note,
+  });
+}
+
+// ─── Service Layer ─────────────────────────────────────────────────────────────
+class ReportService {
+  static final ReportService _instance = ReportService._internal();
+  factory ReportService() => _instance;
+  ReportService._internal() {
+    _reports.addAll(kInitialReports);
+  }
+
+  final List<PWDReport> _reports = [];
+
+  // TODO (backend): replace with →
+  //   final res = await supabase.from('reports').select();
+  //   return res.map((r) => PWDReport.fromMap(r)).toList();
+  List<PWDReport> getAllReports() => List.unmodifiable(_reports);
+
+  // TODO (backend): replace with →
+  //   final res = await supabase.from('reports').select().eq('floor', floor);
+  //   return res.map((r) => PWDReport.fromMap(r)).toList();
+  List<PWDReport> getFloorReports(int floor) =>
+      _reports.where((r) => r.floor == floor).toList();
+
+  // TODO (backend): replace with →
+  //   await supabase.from('reports').insert(report.toMap());
+  void submitReport(PWDReport report) => _reports.add(report);
+}
+
+// ─── Building Floor Data ──────────────────────────────────────────────────────
+const List<FloorData> kFloors = [
+  FloorData(
+    number: 1,
+    label: 'Ground Floor',
+    rooms: [
+      RoomData(name: "Women's\nToilet", type: RoomType.toilet),
+      RoomData(name: 'CICS Orgs\nOffice', type: RoomType.office, badge: '★'),
+      RoomData(name: '101', type: RoomType.classroom),
+      RoomData(name: '102', type: RoomType.classroom),
+      RoomData(name: '103', type: RoomType.classroom),
+      RoomData(name: '104', type: RoomType.classroom),
+      RoomData(name: '105', type: RoomType.classroom),
+      RoomData(name: '106', type: RoomType.classroom),
+      RoomData(name: 'Faculty\nToilet', type: RoomType.toilet),
+      RoomData(name: 'Utility\nRoom', type: RoomType.utility, badge: '⚙'),
+    ],
+    stairsLeft: true,
+    stairsRight: true,
+  ),
+  FloorData(
+    number: 2,
+    label: '2nd Floor',
+    rooms: [
+      RoomData(name: 'Faculty\nToilet', type: RoomType.toilet),
+      RoomData(name: '201', type: RoomType.classroom),
+      RoomData(name: '202', type: RoomType.classroom),
+      RoomData(
+          name: 'CPE\nFaculty', type: RoomType.office, badge: 'A'),
+      RoomData(
+          name: 'Student\nServices',
+          type: RoomType.office,
+          badge: 'B',
+          widthFactor: 1.4),
+      RoomData(
+          name: 'Consult\nOffice',
+          type: RoomType.office,
+          badge: 'C',
+          widthFactor: 1.2),
+      RoomData(name: 'CICS\nFaculty', type: RoomType.office, badge: 'D'),
+      RoomData(name: "Dean's\nOffice", type: RoomType.office, badge: 'E'),
+      RoomData(name: 'Faculty\nToilet', type: RoomType.toilet),
+    ],
+    stairsLeft: true,
+    stairsRight: true,
+  ),
+  FloorData(
+    number: 3,
+    label: '3rd Floor',
+    rooms: [
+      RoomData(name: "Women's\nToilet", type: RoomType.toilet),
+      RoomData(name: 'LAB 1', type: RoomType.lab),
+      RoomData(name: 'LAB 2', type: RoomType.lab),
+      RoomData(name: 'LAB 3', type: RoomType.lab),
+      RoomData(name: 'LAB 4', type: RoomType.lab),
+      RoomData(name: 'LAB 5', type: RoomType.lab),
+      RoomData(name: 'LAB 6', type: RoomType.lab),
+      RoomData(name: "Men's\nToilet", type: RoomType.toilet),
+    ],
+    stairsLeft: true,
+    stairsRight: true,
+  ),
+  FloorData(
+    number: 4,
+    label: '4th Floor',
+    rooms: [
+      RoomData(name: '401', type: RoomType.classroom),
+      RoomData(name: '402', type: RoomType.classroom),
+      RoomData(name: 'Physics\nLab', type: RoomType.lab, widthFactor: 1.2),
+      RoomData(name: 'SMART', type: RoomType.lab, widthFactor: 1.2),
+      RoomData(name: 'EDL', type: RoomType.lab),
+      RoomData(name: 'Tech\nLab', type: RoomType.lab, badge: 'F'),
+      RoomData(name: 'ITL', type: RoomType.lab),
+    ],
+    stairsLeft: false,
+    stairsRight: true,
+  ),
+  FloorData(
+    number: 5,
+    label: '5th Floor',
+    rooms: [
+      RoomData(name: '501', type: RoomType.classroom),
+      RoomData(name: '502', type: RoomType.classroom),
+      RoomData(name: '503', type: RoomType.classroom),
+      RoomData(name: '504', type: RoomType.classroom),
+      RoomData(name: '505', type: RoomType.classroom),
+      RoomData(name: '506', type: RoomType.classroom),
+    ],
+    stairsLeft: false,
+    stairsRight: false,
+  ),
+];
+
+// ─── Route Definitions ────────────────────────────────────────────────────────
+// PWD Routes — follow accessible path (ramp side = left on floors 1-3,
+// right stairwell only on floor 4, no stairwell on floor 5 so route is
+// just a corridor traverse from room entry point to nearest exit).
+const Map<int, FloorRoute> kPwdRoutes = {
+  1: FloorRoute(
+    startX: 0.08,
+    endX: 0.90,
+    note: 'Entrance ramp (left) → accessible corridor → right exit',
+  ),
+  2: FloorRoute(
+    startX: 0.04,
+    endX: 0.92,
+    note: 'Left stairwell (from ramp side) → corridor → destination',
+  ),
+  3: FloorRoute(
+    startX: 0.04,
+    endX: 0.92,
+    note: 'Continue via left stairwell → traverse corridor',
+  ),
+  4: FloorRoute(
+    startX: 0.94,
+    endX: 0.08,
+    note: 'Right stairwell only → corridor (no left stairwell on this floor)',
+  ),
+  // FIX: Floor 5 has NO stairwells at all. Route shows corridor traverse
+  // from left end to right end — user must use right stairwell on floor 4
+  // to reach floor 5. Route here just shows accessible path along the floor.
+  5: FloorRoute(
+    startX: 0.10,
+    endX: 0.90,
+    note: 'No stairwells on this floor — traverse corridor to destination',
+  ),
+};
+
+// Emergency Routes — fastest path to nearest exit stairwell, then ground floor.
+const Map<int, FloorRoute> kEmergencyRoutes = {
+  1: FloorRoute(
+    startX: 0.50,
+    endX: 0.94,
+    note: 'Evacuate → main exit at right end of building',
+  ),
+  2: FloorRoute(
+    startX: 0.50,
+    endX: 0.04,
+    note: 'Left stairwell → descend to ground floor → main exit',
+  ),
+  3: FloorRoute(
+    startX: 0.50,
+    endX: 0.04,
+    note: 'Left stairwell → descend to ground floor → main exit',
+  ),
+  4: FloorRoute(
+    startX: 0.50,
+    endX: 0.94,
+    note: 'Right stairwell → descend to ground floor → main exit',
+  ),
+  // FIX: Floor 5 has no stairwells — emergency route goes to right edge
+  // where floor 4's right stairwell is accessible via descent.
+  5: FloorRoute(
+    startX: 0.50,
+    endX: 0.94,
+    note: 'Move to right end → use floor 4 right stairwell → exit',
+  ),
+};
+
+// Visual Impairment Routes — wall-guided paths, minimal turns.
+const Map<int, FloorRoute> kVisualRoutes = {
+  1: FloorRoute(
+      startX: 0.08,
+      endX: 0.50,
+      note: 'Follow wall edge → stay centered → avoid crowded exits'),
+  2: FloorRoute(
+      startX: 0.04,
+      endX: 0.50,
+      note: 'Keep left wall → move toward central offices'),
+  3: FloorRoute(
+      startX: 0.04,
+      endX: 0.50,
+      note: 'Use consistent wall guidance → avoid lab congestion'),
+  4: FloorRoute(
+      startX: 0.94,
+      endX: 0.50,
+      note: 'Use right-side landmarks → proceed to central corridor'),
+  5: FloorRoute(
+      startX: 0.10,
+      endX: 0.50,
+      note: 'Straight corridor path → minimal turns'),
+};
+
+// Hearing Impairment Routes — toward visible exit signage.
+const Map<int, FloorRoute> kHearingRoutes = {
+  1: FloorRoute(
+      startX: 0.50,
+      endX: 0.93,
+      note: 'Proceed to visible exit signage (right side)'),
+  2: FloorRoute(
+      startX: 0.50,
+      endX: 0.04,
+      note: 'Move to stairwell with visible exit indicators'),
+  3: FloorRoute(
+      startX: 0.50,
+      endX: 0.04,
+      note: 'Follow visual exit signs → left stairwell'),
+  4: FloorRoute(
+      startX: 0.50,
+      endX: 0.94,
+      note: 'Use right stairwell (clear visibility path)'),
+  5: FloorRoute(
+      startX: 0.50,
+      endX: 0.94,
+      note: 'Proceed to nearest visible exit route'),
+};
+
+// ─── Predefined Locations Per Floor ──────────────────────────────────────────
+const Map<int, List<(String, double)>> kFloorLocations = {
+  1: [
+    ("Main Entrance / Ramp", 0.07),
+    ("Women's Toilet", 0.04),
+    ("CICS Orgs Office", 0.15),
+    ("Room 101 Entrance", 0.25),
+    ("Room 102 Entrance", 0.34),
+    ("Room 103 Entrance", 0.43),
+    ("Room 104 Entrance", 0.52),
+    ("Room 105 Entrance", 0.62),
+    ("Room 106 Entrance", 0.72),
+    ("Faculty Toilet", 0.83),
+    ("Utility Room / Right Exit", 0.93),
+  ],
+  2: [
+    ("Left Stairwell", 0.03),
+    ("Faculty Toilet (Left)", 0.07),
+    ("Room 201 Entrance", 0.18),
+    ("Room 202 Entrance", 0.28),
+    ("CPE Faculty (A)", 0.38),
+    ("Student Services (B)", 0.50),
+    ("Consultation Office (C)", 0.62),
+    ("CICS Faculty (D)", 0.74),
+    ("Dean's Office (E)", 0.84),
+    ("Faculty Toilet (Right)", 0.93),
+    ("Right Stairwell", 0.97),
+  ],
+  3: [
+    ("Left Stairwell", 0.03),
+    ("Women's Toilet", 0.07),
+    ("Lab 1 Entrance", 0.20),
+    ("Lab 2 Entrance", 0.32),
+    ("Lab 3 Entrance", 0.44),
+    ("Lab 4 Entrance", 0.56),
+    ("Lab 5 Entrance", 0.68),
+    ("Lab 6 Entrance", 0.80),
+    ("Men's Toilet", 0.91),
+    ("Right Stairwell", 0.97),
+  ],
+  4: [
+    ("Room 401 Entrance", 0.10),
+    ("Room 402 Entrance", 0.22),
+    ("Physics Lab Entrance", 0.35),
+    ("SMART Classroom", 0.50),
+    ("EDL Entrance", 0.63),
+    ("Tech Lab (F) Entrance", 0.75),
+    ("ITL Entrance", 0.87),
+    ("Right Stairwell", 0.97),
+  ],
+  5: [
+    ("Room 501 Entrance", 0.10),
+    ("Room 502 Entrance", 0.25),
+    ("Room 503 Entrance", 0.40),
+    ("Room 504 Entrance", 0.55),
+    ("Room 505 Entrance", 0.70),
+    ("Room 506 Entrance", 0.85),
+  ],
+};
+
+// ─── Initial Mock Data ────────────────────────────────────────────────────────
+final List<PWDReport> kInitialReports = const [
+  PWDReport(
+    id: 'r1', floor: 1, location: 'Main Entrance / Ramp',
+    issueType: 'ramp',
+    description: 'Ramp surface is slippery when wet — use caution',
+    severity: 'high', xNorm: 0.07,
+  ),
+  PWDReport(
+    id: 'r2', floor: 1, location: 'Utility Room / Right Exit',
+    issueType: 'exit',
+    description: 'Exit accessible — door width OK for standard wheelchair',
+    severity: 'low', xNorm: 0.93,
+  ),
+  PWDReport(
+    id: 'r3', floor: 2, location: "Dean's Office (E)",
+    issueType: 'hazard',
+    description: "Narrow corridor near Dean's Office — difficult for large wheelchairs",
+    severity: 'medium', xNorm: 0.84,
+  ),
+  PWDReport(
+    id: 'r4', floor: 2, location: 'Left Stairwell',
+    issueType: 'stairs',
+    description: 'No handrail on right side of stairwell',
+    severity: 'medium', xNorm: 0.03,
+  ),
+  PWDReport(
+    id: 'r5', floor: 3, location: 'Left Stairwell',
+    issueType: 'stairs',
+    description: 'Steep stairwell — no accessible alternative on this side',
+    severity: 'high', xNorm: 0.03,
+  ),
+  PWDReport(
+    id: 'r6', floor: 3, location: 'Lab 4 Entrance',
+    issueType: 'hazard',
+    description: 'Door threshold too high — difficult for wheelchair entry',
+    severity: 'high', xNorm: 0.56,
+  ),
+];
+
+// ─── Accessibility Ranking ────────────────────────────────────────────────────
+const Map<int, (String, Color, Color)> kFloorRanking = {
+  1: ('Accessible (9.5)', Color(0xFF3B6D11), Color(0xFFEAF3DE)),
+  2: ('Fair (7.0)', Color(0xFF854F0B), Color(0xFFFAEEDA)),
+  3: ('Limited (5.2)', Color(0xFFA32D2D), Color(0xFFFCEBEB)),
+  4: ('Fair (6.8)', Color(0xFF854F0B), Color(0xFFFAEEDA)),
+  5: ('Accessible (9.0)', Color(0xFF3B6D11), Color(0xFFEAF3DE)),
+};
+
+// ─── Room type descriptions for info panel ────────────────────────────────────
+// Used when a room is tapped to show context.
+String _roomTypeLabel(RoomType t) => switch (t) {
+      RoomType.classroom => 'Classroom',
+      RoomType.lab => 'Computer Laboratory',
+      RoomType.office => 'Office',
+      RoomType.toilet => 'Comfort Room',
+      RoomType.utility => 'Utility Room',
+    };
+
+String _roomAccessibility(RoomType t) => switch (t) {
+      RoomType.classroom => 'Standard door width. Check for step-free entry.',
+      RoomType.lab => 'Lab entrance may have raised threshold — report if issue.',
+      RoomType.office => 'Office corridors may be narrow for large wheelchairs.',
+      RoomType.toilet => 'Check for PWD-compliant grab bars and turning space.',
+      RoomType.utility => 'Staff access only.',
+    };
+
+// ─── Map Screen ───────────────────────────────────────────────────────────────
+
+class MapScreen extends StatefulWidget {
+  const MapScreen({super.key});
+  @override
+  State<MapScreen> createState() => _MapScreenState();
+}
+
+class _MapScreenState extends State<MapScreen> {
+  int _floorIndex = 0;
+  AppMode _mode = AppMode.normal;
+  DisabilityMode _disability = DisabilityMode.none;
+  PWDReport? _selectedReport;
+
+  // ADDED: tracks which room was tapped, null when no room selected
+  RoomData? _selectedRoom;
+
+  final _transformController = TransformationController();
+  final ReportService _service = ReportService();
+
+  static const double _mapHeight = 220.0;
+  static const double _corridorH = 35.0;
+  static const double _stairsW = 22.0;
+
+  FloorData get _floor => kFloors[_floorIndex];
+  List<PWDReport> get _floorReports => _service.getFloorReports(_floor.number);
+
+  @override
+  void dispose() {
+    _transformController.dispose();
+    super.dispose();
+  }
+
+  // Computes room rects using the same logic as FloorPlanPainter,
+  // so tap coordinates match what is drawn on screen.
+  List<(RoomData, Rect)> _computeRoomRects(double mapWidth) {
+    const roomH = _mapHeight - _corridorH;
+    final roomStartX = _floor.stairsLeft ? _stairsW : 4.0;
+    final roomEndX = _floor.stairsRight ? mapWidth - _stairsW : mapWidth - 4.0;
+    final totalFactor =
+        _floor.rooms.fold(0.0, (s, r) => s + r.widthFactor);
+    final unitW = (roomEndX - roomStartX) / totalFactor;
+
+    final result = <(RoomData, Rect)>[];
+    double x = roomStartX;
+    for (final room in _floor.rooms) {
+      final rw = unitW * room.widthFactor;
+      // Match painter: Rect.fromLTWH(x + 1, 4, rw - 2, roomH - 8)
+      result.add((room, Rect.fromLTWH(x + 1, 4, rw - 2, roomH - 8)));
+      x += rw;
+    }
+    return result;
+  }
+
+  void _handleTap(Offset localOffset, double mapWidth) {
+    final sceneOffset = _transformController.toScene(localOffset);
+    const roomH = _mapHeight - _corridorH;
+
+    // 1. Check report markers first (higher priority than room taps)
+    for (final PWDReport report in _floorReports) {
+      final double mx = report.xNorm * mapWidth;
+      final double my = roomH / 2;
+      if ((sceneOffset.dx - mx).abs() < 22 &&
+          (sceneOffset.dy - my).abs() < 22) {
+        setState(() {
+          _selectedReport =
+              (_selectedReport?.id == report.id) ? null : report;
+          _selectedRoom = null; // close room panel if open
+        });
+        return;
+      }
+    }
+
+    // 2. Check room rects — ADDED: room tap now shows info popup
+    final rects = _computeRoomRects(mapWidth);
+    for (final (RoomData room, Rect rect) in rects) {
+      if (rect.contains(sceneOffset)) {
+        setState(() {
+          _selectedRoom = (_selectedRoom == room) ? null : room;
+          _selectedReport = null; // close report panel if open
+        });
+        return;
+      }
+    }
+
+    // 3. Tapped empty space — close everything
+    setState(() {
+      _selectedReport = null;
+      _selectedRoom = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ranking = kFloorRanking[_floor.number]!;
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: const Text('CICS Inclusive Map',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        actions: <Widget>[
+          IconButton(
+            icon: const Icon(Icons.zoom_out_map),
+            tooltip: 'Reset zoom',
+            onPressed: () => setState(() {
+              _transformController.value = Matrix4.identity();
+              _selectedReport = null;
+              _selectedRoom = null;
+            }),
+          ),
+          _DisabilityPicker(
+            current: _disability,
+            onChanged: (DisabilityMode d) => setState(() => _disability = d),
+          ),
+        ],
+      ),
+      body: Column(
+        children: <Widget>[
+          _FloorSelector(
+            selected: _floorIndex,
+            onChanged: (int i) => setState(() {
+              _floorIndex = i;
+              _selectedReport = null;
+              _selectedRoom = null;
+              _transformController.value = Matrix4.identity();
+            }),
+          ),
+          _ModeToggle(
+            current: _mode,
+            onChanged: (AppMode m) => setState(() {
+              _mode = m;
+              _selectedReport = null;
+              _selectedRoom = null;
+            }),
+          ),
+          _LegendBar(),
+
+          // Accessibility rating strip
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 12),
+            color: ranking.$3,
+            child: Text(
+              'Floor ${_floor.number} Accessibility: ${ranking.$1}',
+              style: TextStyle(
+                  fontSize: 11, color: ranking.$2, fontWeight: FontWeight.bold),
+            ),
+          ),
+
+          // Route banner — only when a route mode is active
+          if (_mode != AppMode.normal)
+            _RouteBanner(
+              mode: _mode,
+              floor: _floor.number,
+              disability: _disability,
+            ),
+
+          // Zoomable map area
+          Expanded(
+            child: LayoutBuilder(
+                builder: (BuildContext ctx, BoxConstraints outer) {
+              final double mapWidth = outer.maxWidth - 24;
+              return Stack(
+                children: <Widget>[
+                  GestureDetector(
+                    onTapDown: (TapDownDetails d) =>
+                        _handleTap(d.localPosition, mapWidth),
+                    child: InteractiveViewer(
+                      transformationController: _transformController,
+                      boundaryMargin: const EdgeInsets.all(80),
+                      minScale: 0.5,
+                      maxScale: 6.0,
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 16),
+                          child: SizedBox(
+                            width: mapWidth,
+                            height: _mapHeight,
+                            child: CustomPaint(
+                              painter: FloorPlanPainter(
+                                floor: _floor,
+                                mode: _mode,
+                                disability: _disability,
+                                reports: _floorReports,
+                                selected: _selectedReport,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Report popup — shown when a PWD marker is tapped
+                  if (_selectedReport != null)
+                    Positioned(
+                      bottom: 20,
+                      left: 20,
+                      right: 20,
+                      child: _ReportPopup(
+                        report: _selectedReport!,
+                        onClose: () =>
+                            setState(() => _selectedReport = null),
+                      ),
+                    ),
+
+                  // ADDED: Room info popup — shown when a room is tapped.
+                  // Replaces _BuildingInfoPanel which was always visible
+                  // and blocked the map. This only appears on demand.
+                  if (_selectedRoom != null)
+                    Positioned(
+                      bottom: 20,
+                      left: 20,
+                      right: 20,
+                      child: _RoomInfoPopup(
+                        room: _selectedRoom!,
+                        floor: _floor,
+                        onClose: () =>
+                            setState(() => _selectedRoom = null),
+                      ),
+                    ),
+
+                  // Disability mode banner — stays as small chip top-left
+                  if (_disability != DisabilityMode.none)
+                    _DisabilityBanner(mode: _disability),
+                ],
+              );
+            }),
+          ),
+          _RankingBar(currentFloor: _floor.number),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showSubmitDialog(context),
+        icon: const Icon(Icons.add_location_alt_outlined),
+        label: const Text('Report Issue'),
+        backgroundColor: const Color(0xFF1D9E75),
+        foregroundColor: Colors.white,
+      ),
+    );
+  }
+
+  void _showSubmitDialog(BuildContext context) {
+    final List<(String, double)> locations =
+        kFloorLocations[_floor.number] ?? <(String, double)>[];
+    if (locations.isEmpty) return;
+
+    String selectedLocation = locations.first.$1;
+    String selectedType = 'hazard';
+    String selectedSeverity = 'medium';
+    final TextEditingController descCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (BuildContext ctx) => StatefulBuilder(
+        builder: (BuildContext ctx, StateSetter setDlgState) => AlertDialog(
+          title: Text('Report on Floor ${_floor.number}',
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text('Location',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 4),
+                DropdownButtonFormField<String>(
+                  value: selectedLocation,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 8),
+                  ),
+                  items: locations
+                      .map<DropdownMenuItem<String>>(
+                          ((String, double) loc) => DropdownMenuItem<String>(
+                                value: loc.$1,
+                                child: Text(loc.$1,
+                                    style: const TextStyle(fontSize: 12)),
+                              ))
+                      .toList(),
+                  onChanged: (String? v) => setDlgState(
+                      () => selectedLocation = v ?? selectedLocation),
+                ),
+                const SizedBox(height: 12),
+                const Text('Issue Type',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: <String>[
+                    'ramp', 'stairs', 'hazard', 'exit', 'noise'
+                  ].map<Widget>((String t) {
+                    final bool active = selectedType == t;
+                    return GestureDetector(
+                      onTap: () => setDlgState(() => selectedType = t),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: active
+                              ? const Color(0xFFE6F1FB)
+                              : Colors.grey[100],
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: active
+                                  ? const Color(0xFF378ADD)
+                                  : Colors.transparent),
+                        ),
+                        child: Text(t,
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: active
+                                    ? const Color(0xFF185FA5)
+                                    : Colors.grey[700])),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+                const Text('Severity',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 4),
+                Row(
+                  children: <String>['low', 'medium', 'high']
+                      .map<Widget>((String s) {
+                    final bool active = selectedSeverity == s;
+                    const Map<String, (Color, Color)> cm = {
+                      'low': (Color(0xFFEAF3DE), Color(0xFF3B6D11)),
+                      'medium': (Color(0xFFFAEEDA), Color(0xFF854F0B)),
+                      'high': (Color(0xFFFCEBEB), Color(0xFFA32D2D)),
+                    };
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () =>
+                            setDlgState(() => selectedSeverity = s),
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 4),
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 7),
+                          decoration: BoxDecoration(
+                            color: active ? cm[s]!.$1 : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                                color: active
+                                    ? cm[s]!.$2
+                                    : Colors.transparent,
+                                width: active ? 1.5 : 1),
+                          ),
+                          child: Text(s,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: active
+                                      ? cm[s]!.$2
+                                      : Colors.grey[600])),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+                const Text('Description',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 4),
+                TextField(
+                  controller: descCtrl,
+                  maxLines: 2,
+                  decoration: InputDecoration(
+                    hintText: 'Describe the issue briefly...',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.all(10),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1D9E75),
+                  foregroundColor: Colors.white),
+              onPressed: () {
+                final (String, double) loc = locations.firstWhere(
+                    ((String, double) l) => l.$1 == selectedLocation,
+                    orElse: () => locations.first);
+
+                final PWDReport report = PWDReport(
+                  id: 'r${DateTime.now().millisecondsSinceEpoch}',
+                  floor: _floor.number,
+                  location: selectedLocation,
+                  issueType: selectedType,
+                  description: descCtrl.text.isEmpty
+                      ? '$selectedType issue reported here'
+                      : descCtrl.text,
+                  severity: selectedSeverity,
+                  xNorm: loc.$2,
+                );
+
+                // BACKEND: make this async and await when Supabase is connected
+                _service.submitReport(report);
+                setState(() {});
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(
+                      'Report submitted — ${report.location}, Floor ${report.floor}'),
+                  backgroundColor: const Color(0xFF1D9E75),
+                  behavior: SnackBarBehavior.floating,
+                ));
+              },
+              child: const Text('Submit'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Widgets ──────────────────────────────────────────────────────────────────
+
+class _FloorSelector extends StatelessWidget {
+  final int selected;
+  final ValueChanged<int> onChanged;
+  const _FloorSelector({required this.selected, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 50,
+      color: Colors.grey[50],
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: kFloors.length,
+        itemBuilder: (BuildContext ctx, int i) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: ChoiceChip(
+            label: Text('Floor ${kFloors[i].number}'),
+            selected: selected == i,
+            onSelected: (bool _) => onChanged(i),
+            selectedColor: const Color(0xFF1D9E75).withOpacity(0.15),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeToggle extends StatelessWidget {
+  final AppMode current;
+  final ValueChanged<AppMode> onChanged;
+  const _ModeToggle({required this.current, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: <Widget>[
+        _btn(AppMode.normal, Icons.map, 'Normal'),
+        _btn(AppMode.pwd, Icons.accessible_forward, 'PWD Route'),
+        _btn(AppMode.emergency, Icons.warning_amber, 'Emergency'),
+      ],
+    );
+  }
+
+  Widget _btn(AppMode m, IconData icon, String label) {
+    final bool active = current == m;
+    final Color color =
+        m == AppMode.emergency ? Colors.red : const Color(0xFF1D9E75);
+    return TextButton.icon(
+      onPressed: () => onChanged(m),
+      icon: Icon(icon, size: 18, color: active ? color : Colors.grey),
+      label: Text(label,
+          style: TextStyle(
+              fontSize: 11,
+              color: active ? Colors.black87 : Colors.grey)),
+    );
+  }
+}
+
+class _LegendBar extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          _dot(const Color(0xFF1D9E75), 'Ramp'),
+          _dot(const Color(0xFFEF9F27), 'Stairs'),
+          _dot(const Color(0xFFE24B4A), 'Hazard'),
+          _dot(const Color(0xFF378ADD), 'Exit'),
+        ],
+      ),
+    );
+  }
+
+  Widget _dot(Color c, String l) => Row(children: <Widget>[
+        Icon(Icons.circle, size: 8, color: c),
+        Text(' $l   ', style: const TextStyle(fontSize: 9)),
+      ]);
+}
+
+class _RouteBanner extends StatelessWidget {
+  final AppMode mode;
+  final int floor;
+  final DisabilityMode disability;
+
+  const _RouteBanner({
+    required this.mode,
+    required this.floor,
+    required this.disability,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isPwd = mode == AppMode.pwd;
+
+    FloorRoute? route;
+    if (isPwd) {
+      route = switch (disability) {
+        DisabilityMode.visual => kVisualRoutes[floor],
+        DisabilityMode.hearing => kHearingRoutes[floor],
+        _ => kPwdRoutes[floor], // mobility + none both use PWD route
+      };
+    } else {
+      route = kEmergencyRoutes[floor];
+    }
+
+    if (route == null) return const SizedBox.shrink();
+
+    final Color color = isPwd ? const Color(0xFF1D9E75) : Colors.red;
+    final Color bgColor =
+        isPwd ? const Color(0xFFEAF3DE) : const Color(0xFFFCEBEB);
+    final IconData icon =
+        isPwd ? Icons.accessible_forward : Icons.warning_amber;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      color: bgColor,
+      child: Row(children: <Widget>[
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(route.note,
+              style: TextStyle(
+                  fontSize: 10, color: color, fontWeight: FontWeight.w500)),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ReportPopup extends StatelessWidget {
+  final PWDReport report;
+  final VoidCallback onClose;
+  const _ReportPopup({required this.report, required this.onClose});
+
+  Color get _markerColor => switch (report.issueType) {
+        'ramp' => const Color(0xFF1D9E75),
+        'stairs' => const Color(0xFFEF9F27),
+        'hazard' => const Color(0xFFE24B4A),
+        'exit' => const Color(0xFF378ADD),
+        'noise' => const Color(0xFF8B5CF6),
+        _ => Colors.grey,
+      };
+
+  Color get _severityColor => switch (report.severity) {
+        'high' => const Color(0xFFE24B4A),
+        'medium' => const Color(0xFFEF9F27),
+        'low' => const Color(0xFF1D9E75),
+        _ => Colors.grey,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 6,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(children: <Widget>[
+              Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                      color: _markerColor, shape: BoxShape.circle)),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(report.location,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 13))),
+              GestureDetector(
+                  onTap: onClose,
+                  child: const Icon(Icons.close,
+                      size: 18, color: Colors.grey)),
+            ]),
+            const SizedBox(height: 4),
+            Text(report.description,
+                style:
+                    const TextStyle(fontSize: 12, color: Colors.black87)),
+            const SizedBox(height: 6),
+            Row(children: <Widget>[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _severityColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '${report.severity[0].toUpperCase()}${report.severity.substring(1)} severity',
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: _severityColor,
+                      fontWeight: FontWeight.w500),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(4)),
+                child: Text('Floor ${report.floor}',
+                    style: TextStyle(
+                        fontSize: 10, color: Colors.grey[600])),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ADDED: Room info popup — appears when a room is tapped.
+// Shows room name, type, floor, and a basic accessibility note.
+// Replaces the always-visible _BuildingInfoPanel that was blocking the map.
+class _RoomInfoPopup extends StatelessWidget {
+  final RoomData room;
+  final FloorData floor;
+  final VoidCallback onClose;
+  const _RoomInfoPopup({
+    required this.room,
+    required this.floor,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final typeLabel = _roomTypeLabel(room.type);
+    final accessNote = _roomAccessibility(room.type);
+    return Card(
+      elevation: 6,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(children: <Widget>[
+              const Icon(Icons.meeting_room_outlined,
+                  size: 16, color: Color(0xFF378ADD)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  room.name.replaceAll('\n', ' '),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+              GestureDetector(
+                  onTap: onClose,
+                  child: const Icon(Icons.close,
+                      size: 18, color: Colors.grey)),
+            ]),
+            const SizedBox(height: 4),
+            Text('$typeLabel · Floor ${floor.number}',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE6F1FB),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Icon(Icons.accessible,
+                      size: 12, color: Color(0xFF185FA5)),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(accessNote,
+                        style: const TextStyle(
+                            fontSize: 10, color: Color(0xFF185FA5))),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DisabilityBanner extends StatelessWidget {
+  final DisabilityMode mode;
+  const _DisabilityBanner({required this.mode});
+
+  @override
+  Widget build(BuildContext context) => Positioned(
+        top: 10,
+        left: 10,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+              color: Colors.amber[100],
+              borderRadius: BorderRadius.circular(4)),
+          child: Text('${mode.name.toUpperCase()} MODE ACTIVE',
+              style: const TextStyle(
+                  fontSize: 9, fontWeight: FontWeight.bold)),
+        ),
+      );
+}
+
+class _DisabilityPicker extends StatelessWidget {
+  final DisabilityMode current;
+  final ValueChanged<DisabilityMode> onChanged;
+  const _DisabilityPicker(
+      {required this.current, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<DisabilityMode>(
+      icon: Icon(Icons.accessibility_new,
+          color: current != DisabilityMode.none
+              ? const Color(0xFF1D9E75)
+              : Colors.grey),
+      tooltip: 'Disability mode',
+      onSelected: (DisabilityMode d) =>
+          onChanged(current == d ? DisabilityMode.none : d),
+      itemBuilder: (BuildContext ctx) =>
+          <PopupMenuEntry<DisabilityMode>>[
+        const PopupMenuItem<DisabilityMode>(
+          enabled: false,
+          child: Text('Disability Mode',
+              style: TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+        ...<(DisabilityMode, String, IconData)>[
+          (DisabilityMode.none, 'Off', Icons.close),
+          (DisabilityMode.mobility, 'Mobility / Wheelchair',
+              Icons.accessible),
+          (DisabilityMode.visual, 'Visual Impairment',
+              Icons.visibility),
+          (DisabilityMode.hearing, 'Hearing Impairment',
+              Icons.hearing_disabled),
+        ].map<PopupMenuEntry<DisabilityMode>>(
+            ((DisabilityMode, String, IconData) item) =>
+                PopupMenuItem<DisabilityMode>(
+                  value: item.$1,
+                  child: Row(children: <Widget>[
+                    Icon(item.$3,
+                        size: 16,
+                        color: current == item.$1
+                            ? const Color(0xFF1D9E75)
+                            : Colors.grey),
+                    const SizedBox(width: 8),
+                    Text(item.$2,
+                        style: const TextStyle(fontSize: 12)),
+                  ]),
+                )),
+      ],
+    );
+  }
+}
+
+class _RankingBar extends StatelessWidget {
+  final int currentFloor;
+  const _RankingBar({required this.currentFloor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      decoration: const BoxDecoration(
+          border:
+              Border(top: BorderSide(color: Color(0xFFE5E5E5)))),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: kFloors.map<Widget>((FloorData f) {
+          final bool active = f.number == currentFloor;
+          final (String, Color, Color) r = kFloorRanking[f.number]!;
+          return Expanded(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              decoration: BoxDecoration(
+                color: r.$3,
+                borderRadius: BorderRadius.circular(4),
+                border:
+                    active ? Border.all(color: r.$2, width: 1.5) : null,
+              ),
+              child: Column(children: <Widget>[
+                Text('F${f.number}',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        color: r.$2)),
+                Text(r.$1.split(' ')[0],
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 7, color: r.$2)),
+              ]),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+// ─── CustomPainter ────────────────────────────────────────────────────────────
+
+class FloorPlanPainter extends CustomPainter {
+  final FloorData floor;
+  final AppMode mode;
+  final DisabilityMode disability;
+  final List<PWDReport> reports;
+  final PWDReport? selected;
+
+  static const double corridorH = 35.0;
+  static const double stairsW = 22.0;
+
+  const FloorPlanPainter({
+    required this.floor,
+    required this.mode,
+    required this.disability,
+    required this.reports,
+    this.selected,
+  });
+
+  bool get _hiContrast => disability == DisabilityMode.visual;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double w = size.width;
+    final double h = size.height;
+    final double roomH = h - corridorH;
+
+    // Background
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color =
+            _hiContrast ? Colors.black : const Color(0xFFF2F2F0),
+    );
+
+    // Corridor
+    canvas.drawRect(
+      Rect.fromLTWH(0, roomH, w, corridorH),
+      Paint()
+        ..color = _hiContrast
+            ? const Color(0xFF333300)
+            : const Color(0xFFE0DED8),
+    );
+    canvas.drawLine(
+      Offset(0, roomH),
+      Offset(w, roomH),
+      Paint()
+        ..color =
+            _hiContrast ? Colors.yellow : const Color(0xFFBBB9B4)
+        ..strokeWidth = 0.8,
+    );
+    _text(canvas, 'CORRIDOR', w / 2, roomH + corridorH / 2,
+        fs: 8,
+        color: _hiContrast ? Colors.yellow : const Color(0xFF999999),
+        maxW: w);
+
+    // Rooms
+    final double roomStartX = floor.stairsLeft ? stairsW : 4.0;
+    final double roomEndX =
+        floor.stairsRight ? w - stairsW : w - 4.0;
+    final double totalFactor = floor.rooms
+        .fold(0.0, (double s, RoomData r) => s + r.widthFactor);
+    final double unitW = (roomEndX - roomStartX) / totalFactor;
+
+    double x = roomStartX;
+    for (final RoomData room in floor.rooms) {
+      final double rw = unitW * room.widthFactor;
+      _drawRoom(canvas, Rect.fromLTWH(x + 1, 4, rw - 2, roomH - 8), room);
+      x += rw;
+    }
+
+    // Stairs
+    if (floor.stairsLeft) {
+      _drawStairs(canvas,
+          Rect.fromLTWH(2, 4, stairsW - 4, roomH - 8));
+    }
+    if (floor.stairsRight) {
+      _drawStairs(canvas,
+          Rect.fromLTWH(w - stairsW + 2, 4, stairsW - 4, roomH - 8));
+    }
+
+    // Route overlay
+    if (mode == AppMode.pwd) {
+      final FloorRoute? route = switch (disability) {
+        DisabilityMode.visual => kVisualRoutes[floor.number],
+        DisabilityMode.hearing => kHearingRoutes[floor.number],
+        _ => kPwdRoutes[floor.number],
+      };
+      _drawRoute(canvas, w, roomH, route, const Color(0xFF1D9E75));
+      // Stair avoidance X marks in corridor under each stairwell
+      if (floor.stairsLeft) {
+        _drawAvoidX(canvas, stairsW / 2, roomH + corridorH / 2);
+      }
+      if (floor.stairsRight) {
+        _drawAvoidX(canvas, w - stairsW / 2, roomH + corridorH / 2);
+      }
+    } else if (mode == AppMode.emergency) {
+      _drawRoute(
+          canvas, w, roomH, kEmergencyRoutes[floor.number], Colors.red);
+    }
+
+    // Outer border
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color =
+            _hiContrast ? Colors.white : const Color(0xFF999999)
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke,
+    );
+
+    // PWD report markers
+    for (final PWDReport report in reports) {
+      _drawMarker(
+          canvas,
+          Offset(report.xNorm * w, (h - corridorH) / 2),
+          report,
+          selected?.id == report.id);
+    }
+  }
+
+  void _drawRoom(Canvas canvas, Rect rect, RoomData room) {
+    Color fill;
+    if (_hiContrast) {
+      fill = Colors.black;
+    } else {
+      fill = switch (room.type) {
+        RoomType.classroom => Colors.white,
+        RoomType.lab => const Color(0xFFF0F4FD),
+        RoomType.office => const Color(0xFFFFF8EE),
+        RoomType.toilet => const Color(0xFFECF8F0),
+        RoomType.utility => const Color(0xFFF3F3F1),
+      };
+    }
+
+    canvas.drawRect(rect, Paint()..color = fill);
+    canvas.drawRect(
+        rect,
+        Paint()
+          ..color =
+              _hiContrast ? Colors.white : Colors.grey.shade400
+          ..strokeWidth = 0.8
+          ..style = PaintingStyle.stroke);
+
+    _text(canvas, room.name, rect.center.dx, rect.center.dy,
+        fs: 8,
+        color: _hiContrast ? Colors.white : Colors.black87,
+        maxW: rect.width - 4);
+
+    // Badge: dark circle with white letter, matching reference image style
+    if (room.badge != null) {
+      const double badgeR = 9.0;
+      final double bx = rect.right - badgeR - 2;
+      final double by = rect.top + badgeR + 3;
+      canvas.drawCircle(
+          Offset(bx, by),
+          badgeR,
+          Paint()
+            ..color =
+                _hiContrast ? Colors.white : const Color(0xFF1A1A2E));
+      _text(canvas, room.badge!, bx, by,
+          fs: 8,
+          color: _hiContrast ? Colors.black : Colors.white,
+          bold: true,
+          maxW: badgeR * 2);
+    }
+  }
+
+  void _drawStairs(Canvas canvas, Rect rect) {
+    canvas.drawRect(
+        rect,
+        Paint()
+          ..color = _hiContrast
+              ? const Color(0xFF222200)
+              : const Color(0xFFDDDDDB));
+    final Paint stepP = Paint()
+      ..color = _hiContrast ? Colors.yellow : Colors.black26
+      ..strokeWidth = 0.7;
+    for (int i = 1; i < 5; i++) {
+      final double y = rect.top + (rect.height / 5) * i;
+      canvas.drawLine(
+          Offset(rect.left, y), Offset(rect.right, y), stepP);
+    }
+    _text(canvas, '▲', rect.center.dx, rect.center.dy,
+        fs: 10,
+        color: _hiContrast ? Colors.yellow : Colors.black38,
+        maxW: rect.width);
+  }
+
+  void _drawAvoidX(Canvas canvas, double cx, double cy) {
+    const double r = 7.0;
+    final Paint paint = Paint()
+      ..color = const Color(0xFFE24B4A)
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+        Offset(cx - r, cy - r), Offset(cx + r, cy + r), paint);
+    canvas.drawLine(
+        Offset(cx + r, cy - r), Offset(cx - r, cy + r), paint);
+    canvas.drawCircle(
+        Offset(cx, cy),
+        r + 3,
+        Paint()
+          ..color = const Color(0xFFE24B4A)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1);
+  }
+
+  void _drawRoute(Canvas canvas, double w, double roomH,
+      FloorRoute? route, Color color) {
+    if (route == null) return;
+
+    final double cy = roomH + corridorH / 2;
+    final double sx = route.startX * w;
+    final double ex = route.endX * w;
+
+    final Paint linePaint = Paint()
+      ..color = color
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    final Path src = Path()
+      ..moveTo(sx, cy)
+      ..lineTo(ex, cy);
+    final Path dashed = Path();
+    for (final PathMetric m in src.computeMetrics()) {
+      double dist = 0;
+      bool draw = true;
+      while (dist < m.length) {
+        final double len = draw ? 9.0 : 5.0;
+        if (draw)
+          dashed.addPath(m.extractPath(dist, dist + len), Offset.zero);
+        dist += len;
+        draw = !draw;
+      }
+    }
+    canvas.drawPath(dashed, linePaint);
+
+    // Directional arrow at end point
+    final double dir = ex > sx ? 1.0 : -1.0;
+    canvas.drawPath(
+      Path()
+        ..moveTo(ex + dir * 11, cy)
+        ..lineTo(ex, cy - 6)
+        ..lineTo(ex, cy + 6)
+        ..close(),
+      Paint()..color = color,
+    );
+
+    // Start circle
+    canvas.drawCircle(Offset(sx, cy), 5, Paint()..color = color);
+  }
+
+  void _drawMarker(Canvas canvas, Offset center, PWDReport report,
+      bool isSelected) {
+    final Color color = switch (report.issueType) {
+      'ramp' => const Color(0xFF1D9E75),
+      'stairs' => const Color(0xFFEF9F27),
+      'hazard' => const Color(0xFFE24B4A),
+      'exit' => const Color(0xFF378ADD),
+      'noise' => const Color(0xFF8B5CF6),
+      _ => Colors.grey,
+    };
+    final String label = switch (report.issueType) {
+      'hazard' => '!',
+      'noise' => 'N',
+      _ => report.issueType[0].toUpperCase(),
+    };
+    final double r = isSelected ? 12.0 : 9.0;
+
+    if (isSelected) {
+      canvas.drawCircle(
+          center, r + 5, Paint()..color = color.withOpacity(0.25));
+    }
+    canvas.drawCircle(center, r, Paint()..color = color);
+    canvas.drawCircle(
+        center,
+        r,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
+    _text(canvas, label, center.dx, center.dy,
+        fs: isSelected ? 9 : 7,
+        color: Colors.white,
+        bold: true,
+        maxW: r * 2);
+  }
+
+  void _text(Canvas canvas, String text, double cx, double cy,
+      {required double fs,
+      required Color color,
+      bool bold = false,
+      required double maxW}) {
+    final TextPainter tp = TextPainter(
+      text: TextSpan(
+          text: text,
+          style: TextStyle(
+              fontSize: fs,
+              color: color,
+              fontWeight:
+                  bold ? FontWeight.bold : FontWeight.normal,
+              height: 1.2)),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxW.clamp(1.0, double.infinity));
+    tp.paint(canvas, Offset(cx - tp.width / 2, cy - tp.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(covariant FloorPlanPainter old) =>
+      old.floor != floor ||
+      old.mode != mode ||
+      old.disability != disability ||
+      old.selected?.id != selected?.id ||
+      old.reports.length != reports.length;
+}
